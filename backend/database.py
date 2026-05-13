@@ -52,7 +52,7 @@ def get_today_usage():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT app_name, window_title, start_time, end_time
+        SELECT id, app_name, window_title, start_time, end_time
         FROM app_sessions
         WHERE date = ?
         ORDER BY start_time DESC

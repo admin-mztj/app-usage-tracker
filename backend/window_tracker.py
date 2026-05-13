@@ -13,6 +13,7 @@ class WindowTracker:
         self.tracking = False
         self.current_fg_hwnd = None
         self.window_sessions = {}
+        self.app_sessions = {}
 
     def get_window_info(self, hwnd):
         try:
@@ -43,6 +44,44 @@ class WindowTracker:
         except:
             return False
 
+    def get_process_name(self, hwnd):
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+            exe_name = win32process.GetModuleFileNameEx(handle, 0)
+            exe_name = exe_name.split('\\')[-1] if exe_name else 'Unknown'
+            win32api.CloseHandle(handle)
+            return exe_name
+        except:
+            return 'Unknown'
+
+    def is_process_running(self, exe_name):
+        try:
+            import psutil
+            for proc in psutil.process_iter(['name']):
+                if proc.name().lower() == exe_name.lower():
+                    return True
+            return False
+        except:
+            return True
+
+    def restore_sessions(self):
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            sessions = database.get_today_usage()
+            for session in sessions:
+                if not session['end_time']:
+                    app_name = session['app_name']
+                    if app_name not in self.app_sessions:
+                        self.app_sessions[app_name] = {
+                            'session_id': session['id'],
+                            'start_time': session['start_time'],
+                            'window_title': session.get('window_title', '')
+                        }
+            print(f"Restored {len(self.app_sessions)} active sessions")
+        except Exception as e:
+            print(f"Error restoring sessions: {e}")
+
     def track_windows(self):
         pythoncom.CoInitialize()
         while self.tracking:
@@ -54,17 +93,30 @@ class WindowTracker:
                 if fg_hwnd:
                     info = self.get_window_info(fg_hwnd)
                     if info:
+                        app_name = info['exe_name']
+                        
                         if fg_hwnd != self.current_fg_hwnd:
-                            if self.current_fg_hwnd and self.current_fg_hwnd in self.window_sessions:
-                                database.update_session_end_time(self.window_sessions[self.current_fg_hwnd], now)
+                            if self.current_fg_hwnd:
+                                old_app_name = self.get_process_name(self.current_fg_hwnd)
+                                if old_app_name in self.app_sessions:
+                                    database.update_session_end_time(self.app_sessions[old_app_name]['session_id'], now)
+                                    del self.app_sessions[old_app_name]
 
-                            session_id = database.save_session(
-                                info['exe_name'],
-                                info['title'],
-                                now
-                            )
-                            self.window_sessions[fg_hwnd] = session_id
+                            if app_name not in self.app_sessions:
+                                session_id = database.save_session(
+                                    app_name,
+                                    info['title'],
+                                    now
+                                )
+                                self.app_sessions[app_name] = {
+                                    'session_id': session_id,
+                                    'start_time': now,
+                                    'window_title': info['title']
+                                }
+                            
                             self.current_fg_hwnd = fg_hwnd
+                            if app_name in self.app_sessions:
+                                self.app_sessions[app_name]['window_title'] = info['title']
 
             except Exception as e:
                 print(f"Error in tracking: {e}")
@@ -76,12 +128,14 @@ class WindowTracker:
         while self.tracking:
             try:
                 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                for hwnd in list(self.window_sessions.keys()):
-                    if not self.is_window_alive(hwnd):
-                        database.update_session_end_time(self.window_sessions[hwnd], now)
-                        del self.window_sessions[hwnd]
-                        if self.current_fg_hwnd == hwnd:
-                            self.current_fg_hwnd = None
+                for app_name in list(self.app_sessions.keys()):
+                    if not self.is_process_running(app_name):
+                        database.update_session_end_time(self.app_sessions[app_name]['session_id'], now)
+                        del self.app_sessions[app_name]
+                        if self.current_fg_hwnd:
+                            current_app = self.get_process_name(self.current_fg_hwnd)
+                            if current_app == app_name:
+                                self.current_fg_hwnd = None
             except Exception as e:
                 print(f"Error in periodic check: {e}")
             time.sleep(5)
@@ -90,6 +144,10 @@ class WindowTracker:
         self.tracking = True
         self.current_fg_hwnd = None
         self.window_sessions = {}
+        self.app_sessions = {}
+        
+        self.restore_sessions()
+        
         self.track_thread = threading.Thread(target=self.track_windows, daemon=True)
         self.check_thread = threading.Thread(target=self.periodic_check, daemon=True)
         self.track_thread.start()
