@@ -1,21 +1,10 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import database
-import logging
-import os
+import logger_config
 from datetime import datetime, timedelta
 
-# 配置日志
-LOG_PATH = os.path.join(os.path.dirname(__file__), 'app_usage.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_PATH, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = logger_config.setup_logger(__name__)
 
 app = Flask(__name__)
 CORS(app)

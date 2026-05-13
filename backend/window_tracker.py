@@ -1,26 +1,15 @@
 import time
 import threading
 import pythoncom
-import logging
 from datetime import datetime
 from win32 import win32gui
 from win32 import win32process
 from win32 import win32api
 import win32con
 import database
+import logger_config
 
-# 配置日志
-import os
-LOG_PATH = os.path.join(os.path.dirname(__file__), 'app_usage.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_PATH, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = logger_config.setup_logger(__name__)
 
 class WindowTracker:
     def __init__(self):
