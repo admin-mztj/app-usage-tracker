@@ -1,12 +1,26 @@
 import time
 import threading
 import pythoncom
+import logging
 from datetime import datetime
 from win32 import win32gui
 from win32 import win32process
 from win32 import win32api
 import win32con
 import database
+
+# 配置日志
+import os
+LOG_PATH = os.path.join(os.path.dirname(__file__), 'app_usage.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 class WindowTracker:
     def __init__(self):
@@ -35,13 +49,15 @@ class WindowTracker:
                 'title': title,
                 'exe_name': exe_name
             }
-        except:
+        except Exception as e:
+            logger.error(f"Error getting window info: {e}")
             return None
 
     def is_window_alive(self, hwnd):
         try:
             return win32gui.IsWindow(hwnd)
-        except:
+        except Exception as e:
+            logger.error(f"Error checking window alive: {e}")
             return False
 
     def get_process_name(self, hwnd):
@@ -52,7 +68,8 @@ class WindowTracker:
             exe_name = exe_name.split('\\')[-1] if exe_name else 'Unknown'
             win32api.CloseHandle(handle)
             return exe_name
-        except:
+        except Exception as e:
+            logger.error(f"Error getting process name: {e}")
             return 'Unknown'
 
     def is_process_running(self, exe_name):
@@ -62,11 +79,13 @@ class WindowTracker:
                 if proc.name().lower() == exe_name.lower():
                     return True
             return False
-        except:
+        except Exception as e:
+            logger.error(f"Error checking process running: {e}")
             return True
 
     def restore_sessions(self):
         try:
+            logger.info("Restoring active sessions from database...")
             today = datetime.now().strftime('%Y-%m-%d')
             sessions = database.get_today_usage()
             for session in sessions:
@@ -78,12 +97,13 @@ class WindowTracker:
                             'start_time': session['start_time'],
                             'window_title': session.get('window_title', '')
                         }
-            print(f"Restored {len(self.app_sessions)} active sessions")
+            logger.info(f"Restored {len(self.app_sessions)} active sessions")
         except Exception as e:
-            print(f"Error restoring sessions: {e}")
+            logger.error(f"Error restoring sessions: {e}")
 
     def track_windows(self):
         pythoncom.CoInitialize()
+        logger.info("Window tracking started")
         while self.tracking:
             try:
                 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -96,13 +116,11 @@ class WindowTracker:
                         app_name = info['exe_name']
                         
                         if fg_hwnd != self.current_fg_hwnd:
-                            if self.current_fg_hwnd:
-                                old_app_name = self.get_process_name(self.current_fg_hwnd)
-                                if old_app_name in self.app_sessions:
-                                    database.update_session_end_time(self.app_sessions[old_app_name]['session_id'], now)
-                                    del self.app_sessions[old_app_name]
-
+                            logger.info(f"Window changed: {app_name} - {info['title']}")
+                            
+                            # 只有当应用不在活动会话中时才创建新会话
                             if app_name not in self.app_sessions:
+                                logger.info(f"Starting new session for: {app_name}")
                                 session_id = database.save_session(
                                     app_name,
                                     info['title'],
@@ -113,23 +131,27 @@ class WindowTracker:
                                     'start_time': now,
                                     'window_title': info['title']
                                 }
+                            else:
+                                # 应用已在会话中，只更新窗口标题
+                                self.app_sessions[app_name]['window_title'] = info['title']
                             
                             self.current_fg_hwnd = fg_hwnd
-                            if app_name in self.app_sessions:
-                                self.app_sessions[app_name]['window_title'] = info['title']
 
             except Exception as e:
-                print(f"Error in tracking: {e}")
+                logger.error(f"Error in tracking: {e}")
 
             time.sleep(1)
         pythoncom.CoUninitialize()
+        logger.info("Window tracking stopped")
 
     def periodic_check(self):
+        logger.info("Periodic check started")
         while self.tracking:
             try:
                 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 for app_name in list(self.app_sessions.keys()):
                     if not self.is_process_running(app_name):
+                        logger.info(f"Process closed, ending session: {app_name}")
                         database.update_session_end_time(self.app_sessions[app_name]['session_id'], now)
                         del self.app_sessions[app_name]
                         if self.current_fg_hwnd:
@@ -137,7 +159,7 @@ class WindowTracker:
                             if current_app == app_name:
                                 self.current_fg_hwnd = None
             except Exception as e:
-                print(f"Error in periodic check: {e}")
+                logger.error(f"Error in periodic check: {e}")
             time.sleep(5)
 
     def start(self):
@@ -152,6 +174,7 @@ class WindowTracker:
         self.check_thread = threading.Thread(target=self.periodic_check, daemon=True)
         self.track_thread.start()
         self.check_thread.start()
+        logger.info("Window tracker service started")
 
     def stop(self):
         self.tracking = False
@@ -159,6 +182,7 @@ class WindowTracker:
             self.track_thread.join(timeout=2)
         if hasattr(self, 'check_thread'):
             self.check_thread.join(timeout=2)
+        logger.info("Window tracker service stopped")
 
 if __name__ == '__main__':
     tracker = WindowTracker()

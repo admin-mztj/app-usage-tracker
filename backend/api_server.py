@@ -1,61 +1,93 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import database
+import logging
+import os
 from datetime import datetime, timedelta
+
+# 配置日志
+LOG_PATH = os.path.join(os.path.dirname(__file__), 'app_usage.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
 @app.route('/api/usage/today', methods=['GET'])
 def get_today_usage():
+    logger.info("API request: /api/usage/today")
     sessions = database.get_today_usage()
-    return jsonify(aggregate_usage(sessions))
+    result = aggregate_usage(sessions)
+    logger.info(f"Returned {len(result)} aggregated records for today")
+    return jsonify(result)
 
 @app.route('/api/usage/week', methods=['GET'])
 def get_week_usage():
+    logger.info("API request: /api/usage/week")
     dates = database.get_all_dates_in_week()
     sessions = database.get_week_usage()
+    aggregated = aggregate_usage(sessions)
+    logger.info(f"Returned {len(aggregated)} aggregated records for week")
     return jsonify({
         'dates': dates,
         'sessions': sessions,
-        'aggregated': aggregate_usage(sessions)
+        'aggregated': aggregated
     })
 
 @app.route('/api/usage/month', methods=['GET'])
 def get_month_usage():
+    logger.info("API request: /api/usage/month")
     dates = database.get_all_dates_in_month()
     sessions = database.get_month_usage()
+    aggregated = aggregate_usage(sessions)
+    logger.info(f"Returned {len(aggregated)} aggregated records for month")
     return jsonify({
         'dates': dates,
         'sessions': sessions,
-        'aggregated': aggregate_usage(sessions)
+        'aggregated': aggregated
     })
 
 @app.route('/api/usage/date/<date>', methods=['GET'])
 def get_usage_by_date(date):
+    logger.info(f"API request: /api/usage/date/{date}")
     sessions = database.get_usage_by_date(date)
+    aggregated = aggregate_usage(sessions)
+    logger.info(f"Returned {len(aggregated)} aggregated records for date {date}")
     return jsonify({
         'date': date,
         'sessions': sessions,
-        'aggregated': aggregate_usage(sessions)
+        'aggregated': aggregated
     })
 
 @app.route('/api/usage/app/<app_name>/today/hourly', methods=['GET'])
 def get_app_today_hourly(app_name):
+    logger.info(f"API request: /api/usage/app/{app_name}/today/hourly")
     sessions = database.get_app_today_hourly(app_name)
     hourly_data = calculate_hourly_usage(sessions)
+    logger.info(f"Returned hourly data for app: {app_name}")
     return jsonify(hourly_data)
 
 @app.route('/api/usage/app/<app_name>/week/daily', methods=['GET'])
 def get_app_week_daily(app_name):
+    logger.info(f"API request: /api/usage/app/{app_name}/week/daily")
     sessions = database.get_app_week_hourly(app_name)
     daily_data = calculate_daily_usage(sessions, 'week')
+    logger.info(f"Returned week daily data for app: {app_name}")
     return jsonify(daily_data)
 
 @app.route('/api/usage/app/<app_name>/month/daily', methods=['GET'])
 def get_app_month_daily(app_name):
+    logger.info(f"API request: /api/usage/app/{app_name}/month/daily")
     sessions = database.get_app_month_hourly(app_name)
     daily_data = calculate_daily_usage(sessions, 'month')
+    logger.info(f"Returned month daily data for app: {app_name}")
     return jsonify(daily_data)
 
 def calculate_hourly_usage(sessions):
@@ -76,7 +108,6 @@ def calculate_hourly_usage(sessions):
         current_time = start
 
         while current_time < end:
-            next_hour = current_time + timedelta(hours=1)
             next_hour_start = datetime(current_time.year, current_time.month, current_time.day, current_time.hour + 1) if current_time.hour < 23 else datetime(current_time.year, current_time.month, current_time.day, 23, 59, 59)
 
             if next_hour_start > end:
@@ -190,4 +221,5 @@ def parse_time(time_str):
         return None
 
 if __name__ == '__main__':
+    logger.info("Starting API server on http://127.0.0.1:5000")
     app.run(host='127.0.0.1', port=5000, debug=True)
